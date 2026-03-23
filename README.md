@@ -19,27 +19,38 @@
 ## 本地运行
 
 ```powershell
-cd D:\benndydesktoptool
+# 先进入项目根目录
 dotnet run --project .\DesktopAssistantLite.App\DesktopAssistantLite.App.csproj
 ```
+
+或直接运行：
+
+```powershell
+.\run.bat
+```
+
+若无法启动，请先安装 `.NET 8 Windows Desktop Runtime`。
 
 ## 编译
 
 ```powershell
-cd D:\benndydesktoptool
 dotnet build .\DesktopAssistantLite.sln
 ```
 
 ## 发布
 
 ```powershell
-cd D:\benndydesktoptool
 dotnet publish .\DesktopAssistantLite.App\DesktopAssistantLite.App.csproj -c Release -r win-x64 --self-contained false
 ```
 
 发布输出默认在：
 
 `DesktopAssistantLite.App\bin\Release\net8.0-windows\win-x64\publish`
+
+当前推荐对外分发轻量版发布包。
+使用前提：
+
+- 目标机器已安装 `.NET 8 Windows Desktop Runtime`
 
 ## 当前测试入口
 
