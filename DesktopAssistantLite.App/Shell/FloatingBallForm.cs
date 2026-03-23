@@ -4,16 +4,26 @@ namespace DesktopAssistantLite.App.Shell;
 
 internal sealed class FloatingBallForm : Form
 {
-    private const int BallSize = 78;
-    private const int PeekSize = 20;
+    private const int BallSize = 77;
+    private const int PeekSize = 10;
+    private const int DragThreshold = 6;
+    private const int CornerCut = 13;
 
-    private readonly Label _memoryPercentLabel;
-    private readonly Label _memoryUsageLabel;
     private readonly System.Windows.Forms.Timer _hideTimer;
-    private Point _dragOffset;
+    private readonly System.Windows.Forms.Timer _animationTimer;
+    private Point _mouseDownScreenPoint;
+    private Point _dragStartLocation;
+    private bool _mousePressed;
     private bool _dragging;
+    private bool _pointerInside;
     private bool _dockedLeft;
     private bool _dockedRight;
+    private int _memoryPercentage;
+    private long _usedMb;
+    private float _idlePhase;
+    private float _boostRotation;
+    private VisualState _visualState = VisualState.Idle;
+    private DateTime _stateUntilUtc;
 
     public FloatingBallForm()
     {
@@ -22,47 +32,49 @@ internal sealed class FloatingBallForm : Form
         StartPosition = FormStartPosition.Manual;
         Size = new Size(BallSize, BallSize);
         TopMost = true;
-        BackColor = Color.FromArgb(10, 15, 28);
+        BackColor = Color.FromArgb(10, 16, 30);
         ForeColor = Color.White;
         DoubleBuffered = true;
-
-        _memoryPercentLabel = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 42,
-            TextAlign = ContentAlignment.BottomCenter,
-            ForeColor = Color.White,
-            Font = new Font("Microsoft YaHei UI", 13.5F, FontStyle.Bold),
-            Text = "0%",
-            Cursor = Cursors.SizeAll,
-        };
-
-        _memoryUsageLabel = new Label
-        {
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.TopCenter,
-            ForeColor = Color.FromArgb(207, 226, 255),
-            Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Regular),
-            Text = "0 MB",
-            Cursor = Cursors.SizeAll,
-        };
-
-        Controls.Add(_memoryUsageLabel);
-        Controls.Add(_memoryPercentLabel);
+        Cursor = Cursors.Hand;
+        Opacity = 0.8;
 
         _hideTimer = new System.Windows.Forms.Timer { Interval = 2200 };
         _hideTimer.Tick += (_, _) =>
         {
             _hideTimer.Stop();
-            if (!ClientRectangle.Contains(PointToClient(Cursor.Position)))
+            if (!_pointerInside && !_dragging)
             {
                 HideToEdge();
             }
         };
 
-        BindPointerEvents(this);
-        BindPointerEvents(_memoryPercentLabel);
-        BindPointerEvents(_memoryUsageLabel);
+        _animationTimer = new System.Windows.Forms.Timer { Interval = 33 };
+        _animationTimer.Tick += (_, _) =>
+        {
+            _idlePhase += 0.08F;
+            if (_idlePhase > MathF.PI * 2)
+            {
+                _idlePhase -= MathF.PI * 2;
+            }
+
+            if (_visualState == VisualState.Boosting)
+            {
+                _boostRotation += 8F;
+                if (_boostRotation >= 360F)
+                {
+                    _boostRotation -= 360F;
+                }
+            }
+
+            if (_visualState is VisualState.Success or VisualState.Failure &&
+                DateTime.UtcNow >= _stateUntilUtc)
+            {
+                _visualState = VisualState.Idle;
+            }
+
+            Invalidate();
+        };
+        _animationTimer.Start();
     }
 
     public event EventHandler? PrimaryActionRequested;
@@ -81,32 +93,185 @@ internal sealed class FloatingBallForm : Form
         }
     }
 
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        UpdateRoundRegion();
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        UpdateRoundRegion();
+    }
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        base.OnMouseEnter(e);
+        _pointerInside = true;
+        RevealFromEdge();
+        Invalidate();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        _pointerInside = false;
+        ScheduleHide();
+        Invalidate();
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button != MouseButtons.Left)
+        {
+            return;
+        }
+
+        _mousePressed = true;
+        _dragging = false;
+        _mouseDownScreenPoint = PointToScreen(e.Location);
+        _dragStartLocation = Location;
+        RevealFromEdge();
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!_mousePressed)
+        {
+            return;
+        }
+
+        var currentScreenPoint = PointToScreen(e.Location);
+        var dx = currentScreenPoint.X - _mouseDownScreenPoint.X;
+        var dy = currentScreenPoint.Y - _mouseDownScreenPoint.Y;
+
+        if (!_dragging && (Math.Abs(dx) >= DragThreshold || Math.Abs(dy) >= DragThreshold))
+        {
+            _dragging = true;
+            Cursor = Cursors.SizeAll;
+        }
+
+        if (_dragging)
+        {
+            Location = new Point(_dragStartLocation.X + dx, _dragStartLocation.Y + dy);
+        }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (!_mousePressed)
+        {
+            return;
+        }
+
+        _mousePressed = false;
+
+        if (_dragging)
+        {
+            _dragging = false;
+            Cursor = Cursors.Hand;
+            SnapToWorkingArea();
+            ScheduleHide();
+        }
+    }
+
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+        if (e.Button != MouseButtons.Left)
+        {
+            return;
+        }
+
+        _mousePressed = false;
+        _dragging = false;
+        Cursor = Cursors.Hand;
+        RevealFromEdge();
+        PrimaryActionRequested?.Invoke(this, EventArgs.Empty);
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
-        using var outerPath = CreateCirclePath(new Rectangle(2, 2, Width - 5, Height - 5));
-        using var fillBrush = new LinearGradientBrush(
-            new Rectangle(0, 0, Width, Height),
-            Color.FromArgb(18, 48, 95),
-            Color.FromArgb(19, 148, 212),
-            LinearGradientMode.ForwardDiagonal);
-        using var shadowBrush = new SolidBrush(Color.FromArgb(60, 6, 10, 22));
-        using var borderPen = new Pen(Color.FromArgb(180, 225, 245, 255), 2F);
-        using var innerPen = new Pen(Color.FromArgb(42, 255, 255, 255), 10F);
+        var pulse = 0.5F + (MathF.Sin(_idlePhase) + 1F) * 0.5F;
+        var shellBounds = new Rectangle(3, 3, Width - 7, Height - 7);
+        var coreBounds = new Rectangle(8, 8, Width - 17, Height - 17);
+        var ringBounds = new Rectangle(12, 12, Width - 25, Height - 25);
+        var textBounds = new Rectangle(15, 15, Width - 31, Height - 31);
 
-        e.Graphics.FillEllipse(shadowBrush, 4, 5, Width - 10, Height - 10);
-        e.Graphics.FillPath(fillBrush, outerPath);
-        e.Graphics.DrawPath(innerPen, CreateCirclePath(new Rectangle(11, 11, Width - 23, Height - 23)));
-        e.Graphics.DrawPath(borderPen, outerPath);
+        DrawGlow(e.Graphics, shellBounds, pulse);
+
+        using var shellPath = CreateCyberPath(shellBounds, CornerCut);
+        using var corePath = CreateCyberPath(coreBounds, CornerCut - 4);
+        using var fillBrush = new LinearGradientBrush(
+            shellBounds,
+            GetTopColor(),
+            GetBottomColor(),
+            LinearGradientMode.Vertical);
+        using var coreBrush = new LinearGradientBrush(
+            coreBounds,
+            Color.FromArgb(10, 27, 53),
+            Color.FromArgb(6, 14, 31),
+            LinearGradientMode.ForwardDiagonal);
+        using var borderPen = new Pen(Color.FromArgb(118, 87, 202, 255), 1.4F);
+        using var coreBorderPen = new Pen(Color.FromArgb(42, 102, 242, 255), 1F);
+        using var scanPen = new Pen(Color.FromArgb(110, 76, 226, 255), 1.7F)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+        };
+        using var cyanAccentPen = new Pen(Color.FromArgb(142, 84, 219, 255), 1.3F)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+        };
+
+        e.Graphics.FillPath(fillBrush, shellPath);
+        e.Graphics.FillPath(coreBrush, corePath);
+        e.Graphics.DrawPath(borderPen, shellPath);
+        e.Graphics.DrawPath(coreBorderPen, corePath);
+        e.Graphics.DrawArc(scanPen, new Rectangle(18, 10, Width - 37, 9), 180, 150);
+        e.Graphics.DrawLine(cyanAccentPen, 11, 16, 16, 11);
+        e.Graphics.DrawLine(cyanAccentPen, Width - 17, 11, Width - 12, 16);
+        e.Graphics.DrawLine(cyanAccentPen, 11, Height - 16, 16, Height - 11);
+        e.Graphics.DrawLine(cyanAccentPen, Width - 17, Height - 11, Width - 12, Height - 16);
+
+        DrawProgressRing(e.Graphics, ringBounds, pulse);
+        DrawContent(e.Graphics, textBounds);
     }
 
     public void SetMemoryUsage(int percentage, long usedMb)
     {
-        _memoryPercentLabel.Text = $"{percentage}%";
-        _memoryUsageLabel.Text = $"{usedMb} MB";
+        _memoryPercentage = Math.Max(0, percentage);
+        _usedMb = Math.Max(0, usedMb);
+        Invalidate();
+    }
+
+    public void StartBoostAnimation()
+    {
+        _visualState = VisualState.Boosting;
+        _boostRotation = 0F;
+        Invalidate();
+    }
+
+    public void CompleteBoostAnimation()
+    {
+        _visualState = VisualState.Success;
+        _stateUntilUtc = DateTime.UtcNow.AddMilliseconds(900);
+        Invalidate();
+    }
+
+    public void FailBoostAnimation()
+    {
+        _visualState = VisualState.Failure;
+        _stateUntilUtc = DateTime.UtcNow.AddMilliseconds(900);
+        Invalidate();
     }
 
     public void SnapToWorkingArea()
@@ -136,7 +301,7 @@ internal sealed class FloatingBallForm : Form
 
     public void HideToEdge()
     {
-        if (!AutoHideEnabled || !Visible)
+        if (!AutoHideEnabled || !Visible || _visualState == VisualState.Boosting)
         {
             return;
         }
@@ -153,7 +318,7 @@ internal sealed class FloatingBallForm : Form
 
     private void ScheduleHide()
     {
-        if (!AutoHideEnabled || _dragging)
+        if (!AutoHideEnabled || _dragging || _visualState == VisualState.Boosting)
         {
             return;
         }
@@ -162,55 +327,195 @@ internal sealed class FloatingBallForm : Form
         _hideTimer.Start();
     }
 
-    private void BindPointerEvents(Control control)
+    private void DrawGlow(Graphics graphics, Rectangle outerBounds, float pulse)
     {
-        control.MouseDown += OnMouseDown;
-        control.MouseMove += OnMouseMove;
-        control.MouseUp += OnMouseUp;
-        control.MouseEnter += (_, _) => RevealFromEdge();
-        control.MouseLeave += (_, _) => ScheduleHide();
-        control.DoubleClick += (_, _) => PrimaryActionRequested?.Invoke(this, EventArgs.Empty);
-    }
-
-    private void OnMouseDown(object? sender, MouseEventArgs e)
-    {
-        if (e.Button != MouseButtons.Left)
+        var glowColor = _visualState switch
         {
-            return;
-        }
+            VisualState.Success => Color.FromArgb(88, 208, 255),
+            VisualState.Failure => Color.FromArgb(235, 110, 110),
+            _ => Color.FromArgb(58, 126, 235),
+        };
 
-        _dragging = true;
-        _dragOffset = e.Location;
-        RevealFromEdge();
-    }
-
-    private void OnMouseMove(object? sender, MouseEventArgs e)
-    {
-        if (!_dragging)
+        for (var i = 0; i < 2; i++)
         {
-            return;
+            var spread = 1 + (i * 2) + (int)Math.Round(pulse * 0.6F);
+            var bounds = Rectangle.Inflate(outerBounds, spread, spread);
+            var alpha = Math.Max(4, 8 - (i * 2));
+            using var brush = new SolidBrush(Color.FromArgb(alpha, glowColor));
+            using var glowPath = CreateCyberPath(bounds, CornerCut + spread);
+            graphics.FillPath(brush, glowPath);
         }
-
-        var screenPoint = PointToScreen(e.Location);
-        Location = new Point(screenPoint.X - _dragOffset.X, screenPoint.Y - _dragOffset.Y);
     }
 
-    private void OnMouseUp(object? sender, MouseEventArgs e)
+    private void DrawProgressRing(Graphics graphics, Rectangle ringBounds, float pulse)
     {
-        if (!_dragging)
-        {
-            return;
-        }
+        using var trackPen = new Pen(Color.FromArgb(12, 255, 255, 255), 2.7F);
+        graphics.DrawArc(trackPen, ringBounds, 0, 360);
 
-        _dragging = false;
-        SnapToWorkingArea();
-        ScheduleHide();
+        var accentColor = _visualState switch
+        {
+            VisualState.Success => Color.FromArgb(136, 230, 255),
+            VisualState.Failure => Color.FromArgb(255, 148, 148),
+            _ => Color.FromArgb(86, 215, 255),
+        };
+        var startAngle = _visualState == VisualState.Boosting ? -90F + _boostRotation : -90F;
+        var sweepAngle = _visualState switch
+        {
+            VisualState.Boosting => 72F + (pulse * 26F),
+            VisualState.Success => 360F,
+            VisualState.Failure => 360F,
+            _ => Math.Clamp(_memoryPercentage, 4, 100) * 3.6F,
+        };
+
+        using var accentPen = new Pen(Color.FromArgb(200, accentColor), 2.7F)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+        };
+        graphics.DrawArc(accentPen, ringBounds, startAngle, sweepAngle);
     }
 
-    private static GraphicsPath CreateCirclePath(Rectangle bounds)
+    private void DrawContent(Graphics graphics, Rectangle textBounds)
+    {
+        switch (_visualState)
+        {
+            case VisualState.Boosting:
+                DrawBolt(graphics, Color.White);
+                DrawFooter(graphics, "清理中");
+                break;
+            case VisualState.Success:
+                DrawCheck(graphics, Color.White);
+                DrawFooter(graphics, "完成");
+                break;
+            case VisualState.Failure:
+                DrawCross(graphics, Color.White);
+                DrawFooter(graphics, "重试");
+                break;
+            default:
+                DrawIdleContent(graphics, textBounds);
+                break;
+        }
+    }
+
+    private void DrawIdleContent(Graphics graphics, Rectangle textBounds)
+    {
+        using var valueFont = new Font("Microsoft YaHei UI", 11.2F, FontStyle.Bold);
+        using var percentFont = new Font("Microsoft YaHei UI", 5.8F, FontStyle.Bold);
+        using var textBrush = new SolidBrush(Color.White);
+        using var subBrush = new SolidBrush(Color.FromArgb(198, 233, 255));
+
+        var valueText = _memoryPercentage.ToString();
+        var valueSize = graphics.MeasureString(valueText, valueFont);
+        var totalWidth = valueSize.Width + graphics.MeasureString("%", percentFont).Width - 2;
+        var startX = (Width - totalWidth) / 2F;
+
+        graphics.DrawString(valueText, valueFont, textBrush, startX, textBounds.Top + 4F);
+        graphics.DrawString("%", percentFont, subBrush, startX + valueSize.Width - 1, textBounds.Top + 9F);
+    }
+
+    private void DrawFooter(Graphics graphics, string text)
+    {
+        using var font = new Font("Microsoft YaHei UI", 6.5F, FontStyle.Bold);
+        using var brush = new SolidBrush(Color.FromArgb(231, 244, 255));
+        using var format = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+        };
+        graphics.DrawString(text, font, brush, new RectangleF(0, 43, Width, 10), format);
+    }
+
+    private void DrawBolt(Graphics graphics, Color color)
+    {
+        var points = new[]
+        {
+            new PointF(45, 21),
+            new PointF(37, 36),
+            new PointF(43, 36),
+            new PointF(34, 53),
+            new PointF(39, 40),
+            new PointF(33, 40),
+        };
+
+        using var brush = new SolidBrush(color);
+        graphics.FillPolygon(brush, points);
+    }
+
+    private void DrawCheck(Graphics graphics, Color color)
+    {
+        using var pen = new Pen(color, 4F)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+        };
+        graphics.DrawLines(pen, new[] { new Point(26, 39), new Point(34, 47), new Point(49, 30) });
+    }
+
+    private void DrawCross(Graphics graphics, Color color)
+    {
+        using var pen = new Pen(color, 3.8F)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+        };
+        graphics.DrawLine(pen, 28, 30, 48, 50);
+        graphics.DrawLine(pen, 48, 30, 28, 50);
+    }
+
+    private Color GetTopColor()
+    {
+        return _visualState switch
+        {
+            VisualState.Success => Color.FromArgb(20, 112, 179),
+            VisualState.Failure => Color.FromArgb(140, 68, 78),
+            _ => Color.FromArgb(6, 14, 34),
+        };
+    }
+
+    private Color GetBottomColor()
+    {
+        return _visualState switch
+        {
+            VisualState.Success => Color.FromArgb(18, 138, 232),
+            VisualState.Failure => Color.FromArgb(207, 86, 98),
+            _ => Color.FromArgb(10, 52, 112),
+        };
+    }
+
+    private void UpdateRoundRegion()
+    {
+        using var path = CreateCyberPath(new Rectangle(0, 0, Width - 1, Height - 1), CornerCut);
+        Region = new Region(path);
+    }
+
+    private static GraphicsPath CreateCyberPath(Rectangle bounds, int cut)
     {
         var path = new GraphicsPath();
-        path.AddEllipse(bounds);
+        var left = bounds.Left;
+        var top = bounds.Top;
+        var right = bounds.Right;
+        var bottom = bounds.Bottom;
+
+        path.AddPolygon(new[]
+        {
+            new Point(left + cut, top),
+            new Point(right - cut, top),
+            new Point(right, top + cut),
+            new Point(right, bottom - cut),
+            new Point(right - cut, bottom),
+            new Point(left + cut, bottom),
+            new Point(left, bottom - cut),
+            new Point(left, top + cut),
+        });
+        path.CloseFigure();
         return path;
+    }
+
+    private enum VisualState
+    {
+        Idle,
+        Boosting,
+        Success,
+        Failure,
     }
 }

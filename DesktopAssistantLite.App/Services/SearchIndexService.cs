@@ -28,9 +28,10 @@ internal sealed class SearchIndexService : IDisposable
     public async Task RebuildAsync(IEnumerable<string> paths)
     {
         var normalizedPaths = NormalizePaths(paths);
-        _rebuildCts?.Cancel();
-        _rebuildCts = new CancellationTokenSource();
-        var token = _rebuildCts.Token;
+        CancelPendingRebuild();
+        var rebuildCts = new CancellationTokenSource();
+        _rebuildCts = rebuildCts;
+        var token = rebuildCts.Token;
 
         await Task.Run(() =>
         {
@@ -125,8 +126,29 @@ internal sealed class SearchIndexService : IDisposable
         }
 
         _watchers.Clear();
-        _rebuildCts?.Cancel();
-        _rebuildCts?.Dispose();
+        CancelPendingRebuild();
+    }
+
+    private void CancelPendingRebuild()
+    {
+        var cts = Interlocked.Exchange(ref _rebuildCts, null);
+        if (cts is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Ignore disposed token sources during shutdown.
+        }
+        finally
+        {
+            cts.Dispose();
+        }
     }
 
     private void RestartWatchers(List<string> paths)

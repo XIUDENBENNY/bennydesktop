@@ -10,7 +10,7 @@ internal sealed class AppSettings
 
     public bool ScreenshotHotkeyYieldToQq { get; set; } = true;
 
-    public bool FloatingBallVisible { get; set; } = true;
+    public bool FloatingBallVisible { get; set; }
 
     public bool FloatingBallAutoHide { get; set; } = true;
 
@@ -63,7 +63,7 @@ internal sealed class AppSettings
             StartupEnabled = false,
             ScreenshotHotkeyEnabled = true,
             ScreenshotHotkeyYieldToQq = true,
-            FloatingBallVisible = true,
+            FloatingBallVisible = false,
             FloatingBallAutoHide = true,
             SearchPaths =
             [

@@ -4,7 +4,13 @@ namespace DesktopAssistantLite.App.Forms;
 
 internal sealed class AppToastForm : Form
 {
-    private readonly System.Windows.Forms.Timer _closeTimer;
+    private readonly Label _captionLabel;
+    private readonly Label _titleLabel;
+    private readonly Label _messageLabel;
+    private readonly System.Windows.Forms.Timer _animationTimer;
+    private Point _targetLocation;
+    private ToastPhase _phase = ToastPhase.Showing;
+    private int _holdTicks = 110;
 
     public AppToastForm(string title, string message)
     {
@@ -12,79 +18,55 @@ internal sealed class AppToastForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
-        Width = 460;
-        Height = 156;
-        BackColor = Color.Magenta;
-        TransparencyKey = Color.Magenta;
-        Padding = new Padding(0);
+        Width = 420;
+        Height = 158;
+        BackColor = Color.FromArgb(9, 13, 23);
+        ForeColor = Color.White;
+        DoubleBuffered = true;
+        Opacity = 0;
+        Padding = new Padding(1);
 
-        var container = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Color.Transparent,
-            Padding = new Padding(0),
-        };
-
-        var card = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(18, 24, 38),
-            Padding = new Padding(22, 18, 22, 18),
-        };
-        card.Paint += (_, args) =>
-        {
-            args.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            var bounds = new Rectangle(0, 0, card.Width - 1, card.Height - 1);
-            using var path = CreateRoundedRectangle(bounds, 20);
-            using var backgroundBrush = new SolidBrush(Color.FromArgb(18, 24, 38));
-            using var accentBrush = new SolidBrush(Color.FromArgb(37, 99, 235));
-            using var borderPen = new Pen(Color.FromArgb(36, 53, 84));
-
-            args.Graphics.FillPath(backgroundBrush, path);
-            args.Graphics.DrawPath(borderPen, path);
-            args.Graphics.FillRectangle(accentBrush, 22, 22, 52, 5);
-        };
-
-        var titleLabel = new Label
+        _captionLabel = new Label
         {
             AutoSize = false,
-            Dock = DockStyle.Top,
+            Height = 20,
+            ForeColor = Color.FromArgb(121, 199, 255),
+            Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold),
+            Text = "桌面助手",
+        };
+
+        _titleLabel = new Label
+        {
+            AutoSize = false,
             Height = 34,
             ForeColor = Color.White,
-            Font = new Font("Microsoft YaHei UI", 12F, FontStyle.Bold),
+            Font = new Font("Microsoft YaHei UI", 12.5F, FontStyle.Bold),
             Text = title,
         };
 
-        var messageLabel = new Label
+        _messageLabel = new Label
         {
             AutoSize = false,
-            Dock = DockStyle.Fill,
-            ForeColor = Color.FromArgb(216, 224, 235),
-            Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Regular),
+            ForeColor = Color.FromArgb(215, 226, 239),
+            Font = new Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular),
             Text = message,
         };
 
-        card.Controls.Add(messageLabel);
-        card.Controls.Add(titleLabel);
-        container.Controls.Add(card);
-        Controls.Add(container);
+        Controls.Add(_messageLabel);
+        Controls.Add(_titleLabel);
+        Controls.Add(_captionLabel);
+
+        _animationTimer = new System.Windows.Forms.Timer { Interval = 16 };
+        _animationTimer.Tick += (_, _) => AdvanceAnimation();
 
         Load += (_, _) =>
         {
             var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 720);
-            Location = new Point(
-                area.Left + (area.Width - Width) / 2,
-                area.Top + (area.Height - Height) / 2);
-            Region = new Region(CreateRoundedRectangle(new Rectangle(0, 0, Width, Height), 20));
+            _targetLocation = new Point(area.Right - Width - 26, area.Top + 26);
+            Location = new Point(_targetLocation.X + 38, _targetLocation.Y);
+            Region = new Region(CreateRoundedRectangle(new Rectangle(0, 0, Width, Height), 22));
         };
-
-        _closeTimer = new System.Windows.Forms.Timer { Interval = 2200 };
-        _closeTimer.Tick += (_, _) =>
-        {
-            _closeTimer.Stop();
-            Close();
-        };
-        Shown += (_, _) => _closeTimer.Start();
+        Shown += (_, _) => _animationTimer.Start();
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -99,14 +81,88 @@ internal sealed class AppToastForm : Form
         }
     }
 
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        using var cardPath = CreateRoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), 22);
+        using var backgroundBrush = new LinearGradientBrush(
+            ClientRectangle,
+            Color.FromArgb(15, 22, 39),
+            Color.FromArgb(12, 17, 30),
+            LinearGradientMode.Vertical);
+        using var borderPen = new Pen(Color.FromArgb(36, 61, 92));
+        using var accentBrush = new SolidBrush(Color.FromArgb(52, 211, 153));
+        using var iconBackBrush = new SolidBrush(Color.FromArgb(32, 53, 86, 126));
+        using var iconLinePen = new Pen(Color.White, 3.2F)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+        };
+
+        e.Graphics.FillPath(backgroundBrush, cardPath);
+        e.Graphics.DrawPath(borderPen, cardPath);
+        e.Graphics.FillRectangle(accentBrush, 18, 22, 54, 5);
+
+        var iconBounds = new Rectangle(20, 54, 48, 48);
+        e.Graphics.FillEllipse(iconBackBrush, iconBounds);
+        e.Graphics.DrawLine(iconLinePen, 35, 78, 43, 86);
+        e.Graphics.DrawLine(iconLinePen, 43, 86, 58, 66);
+        e.Graphics.FillEllipse(accentBrush, 33, 63, 8, 8);
+
+        _captionLabel.Location = new Point(90, 18);
+        _captionLabel.Width = Width - 110;
+        _titleLabel.Location = new Point(90, 40);
+        _titleLabel.Width = Width - 110;
+        _messageLabel.Location = new Point(90, 76);
+        _messageLabel.Width = Width - 116;
+        _messageLabel.Height = Height - 90;
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
-            _closeTimer.Dispose();
+            _animationTimer.Dispose();
         }
 
         base.Dispose(disposing);
+    }
+
+    private void AdvanceAnimation()
+    {
+        switch (_phase)
+        {
+            case ToastPhase.Showing:
+                Opacity = Math.Min(0.98, Opacity + 0.14);
+                var newX = Math.Max(_targetLocation.X, Left - 8);
+                Location = new Point(newX, _targetLocation.Y);
+                if (Opacity >= 0.98 && newX == _targetLocation.X)
+                {
+                    _phase = ToastPhase.Holding;
+                }
+                break;
+
+            case ToastPhase.Holding:
+                _holdTicks--;
+                if (_holdTicks <= 0)
+                {
+                    _phase = ToastPhase.Hiding;
+                }
+                break;
+
+            case ToastPhase.Hiding:
+                Opacity = Math.Max(0, Opacity - 0.16);
+                Location = new Point(Left + 8, _targetLocation.Y);
+                if (Opacity <= 0.02)
+                {
+                    _animationTimer.Stop();
+                    Close();
+                }
+                break;
+        }
     }
 
     private static GraphicsPath CreateRoundedRectangle(Rectangle bounds, int radius)
@@ -119,5 +175,12 @@ internal sealed class AppToastForm : Form
         path.AddArc(bounds.X, bounds.Bottom - diameter, diameter, diameter, 90, 90);
         path.CloseFigure();
         return path;
+    }
+
+    private enum ToastPhase
+    {
+        Showing,
+        Holding,
+        Hiding,
     }
 }

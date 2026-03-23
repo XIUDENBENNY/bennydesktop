@@ -50,6 +50,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private SettingsForm? _settingsForm;
     private string? _activeScreenshotHotkeyDisplay;
     private bool _prefersQqScreenshotHotkey;
+    private bool _boostInProgress;
 
     public TrayApplicationContext()
     {
@@ -58,6 +59,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _logService = new LogService(_paths.LogDirectory);
         _settingsService = new SettingsService(_paths.SettingsPath, _paths);
         _settings = _settingsService.Load();
+        _settings.FloatingBallVisible = false;
         _databaseService = new DatabaseService(_paths.DatabasePath);
         _databaseService.Initialize();
         _startupService = new StartupService();
@@ -106,13 +108,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
         _floatingBallForm.PrimaryActionRequested += async (_, _) => await RunBoostAsync();
         PositionFloatingBall();
-        if (_settings.FloatingBallVisible)
-        {
-            _floatingBallForm.Show();
-            _floatingBallForm.SnapToWorkingArea();
-        }
-
-        _toggleFloatingBallItem.Text = _settings.FloatingBallVisible ? "隐藏悬浮球" : "显示悬浮球";
+        _toggleFloatingBallItem.Text = "显示悬浮球";
 
         _hotkeyWindow = new HotkeyWindow();
         _hotkeyWindow.HotkeyPressed += async (_, id) =>
@@ -382,17 +378,30 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task RunBoostAsync()
     {
+        if (_boostInProgress)
+        {
+            return;
+        }
+
+        _boostInProgress = true;
+        _floatingBallForm.StartBoostAnimation();
+
         try
         {
             var result = await _memoryBoostService.RunSafeBoostAsync(_settings.BoostExplorerRestartEnabled);
-            var freedMb = result.EstimatedFreedBytes / 1024d / 1024d;
-            ShowToast($"已安全加速：裁剪 {result.TrimmedProcessCount} 个进程，清理 {result.DeletedItemCount} 项，估算释放 {freedMb:F1} MB。");
+            _floatingBallForm.CompleteBoostAnimation();
+            ShowToast("本次清理已完成", BuildBoostSummaryMessage(result));
             UpdateMemoryDisplay();
         }
         catch (Exception ex)
         {
             _logService.Error("Memory boost failed.", ex);
-            ShowToast("安全加速失败，请查看日志。");
+            _floatingBallForm.FailBoostAnimation();
+            ShowToast("这次清理没有完成", "刚才没能顺利跑完。\r\n你可以稍后再试一次，或到日志里查看原因。");
+        }
+        finally
+        {
+            _boostInProgress = false;
         }
     }
 
@@ -581,10 +590,46 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return _settingsForm;
     }
 
+    private string BuildBoostSummaryMessage(MemoryBoostResult result)
+    {
+        var freedMb = result.EstimatedFreedBytes / 1024d / 1024d;
+        var firstLine = freedMb >= 1
+            ? $"预计为你腾出了 {freedMb:F1} MB 空间。"
+            : "这次没有清出特别明显的空间。";
+
+        var details = new List<string>();
+        if (result.TrimmedProcessCount > 0)
+        {
+            details.Add($"处理了 {result.TrimmedProcessCount} 个占用较高的进程");
+        }
+
+        if (result.DeletedItemCount > 0)
+        {
+            details.Add($"删除了 {result.DeletedItemCount} 个临时文件");
+        }
+
+        if (result.ExplorerRestarted)
+        {
+            details.Add("已顺带重启资源管理器");
+        }
+
+        if (details.Count == 0)
+        {
+            details.Add("系统当前本来就比较干净");
+        }
+
+        return $"{firstLine}\r\n{string.Join("，", details)}。";
+    }
+
     private void ShowToast(string message)
     {
+        ShowToast("Desktop Assistant Lite", message);
+    }
+
+    private void ShowToast(string title, string message)
+    {
         _toastForm?.Close();
-        _toastForm = new AppToastForm("Desktop Assistant Lite", message);
+        _toastForm = new AppToastForm(title, message);
         _toastForm.Show();
     }
 
