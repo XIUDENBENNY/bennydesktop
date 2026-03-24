@@ -29,7 +29,10 @@ dotnet run --project .\DesktopAssistantLite.App\DesktopAssistantLite.App.csproj
 .\run.bat
 ```
 
-若无法启动，请先安装 `.NET 8 Windows Desktop Runtime`。
+若无法启动，请先安装 `.NET 8 Windows Desktop Runtime (x64)`：
+
+- 官方下载页：https://dotnet.microsoft.com/en-us/download/dotnet/8.0
+- 当前直链：https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/8.0.24/windowsdesktop-runtime-8.0.24-win-x64.exe
 
 ## 编译
 
@@ -50,7 +53,7 @@ dotnet publish .\DesktopAssistantLite.App\DesktopAssistantLite.App.csproj -c Rel
 当前推荐对外分发轻量版发布包。
 使用前提：
 
-- 目标机器已安装 `.NET 8 Windows Desktop Runtime`
+- 目标机器已安装 `.NET 8 Windows Desktop Runtime (x64)`
 
 ## 当前测试入口
 
