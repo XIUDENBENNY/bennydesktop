@@ -14,6 +14,8 @@ internal static class NativeMethods
     public const int LvmFirst = 0x1000;
     public const int LvmArrange = LvmFirst + 22;
     public const int LvaDefault = 0x0000;
+    public const uint ShgfiIcon = 0x000000100;
+    public const uint ShgfiSmallIcon = 0x000000001;
     public const uint ProcessQueryInformation = 0x0400;
     public const uint ProcessSetQuota = 0x0100;
 
@@ -43,4 +45,26 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool DestroyIcon(IntPtr hIcon);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Auto)]
+    public static extern IntPtr SHGetFileInfo(
+        string pszPath,
+        uint dwFileAttributes,
+        out ShFileInfo psfi,
+        uint cbFileInfo,
+        uint uFlags);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    public struct ShFileInfo
+    {
+        public IntPtr hIcon;
+        public int iIcon;
+        public uint dwAttributes;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szDisplayName;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+        public string szTypeName;
+    }
 }

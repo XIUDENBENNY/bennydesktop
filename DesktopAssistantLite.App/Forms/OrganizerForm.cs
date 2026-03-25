@@ -8,6 +8,8 @@ internal sealed class OrganizerForm : Form
     private readonly Action<string> _openItemAction;
     private readonly Action<string> _openContainingFolderAction;
     private readonly Func<DesktopItem, string, Task> _moveItemAction;
+    private readonly Func<DesktopItem, Task> _restoreToDesktopAction;
+    private readonly Func<DesktopItem, Task> _moveToRecycleBinAction;
     private readonly Func<Task> _refreshAction;
     private readonly Func<Task> _organizeAction;
     private readonly Func<Task> _restoreAction;
@@ -25,6 +27,9 @@ internal sealed class OrganizerForm : Form
     private Button _refreshButton = null!;
     private ContextMenuStrip _itemContextMenu = null!;
     private ToolStripMenuItem _moveMenuItem = null!;
+    private ToolStripMenuItem _restoreToDesktopMenuItem = null!;
+    private ToolStripMenuItem _moveToRecycleBinMenuItem = null!;
+    private readonly Dictionary<string, Image> _iconCache = new(StringComparer.OrdinalIgnoreCase);
 
     private Dictionary<string, List<DesktopItem>> _groups = new(StringComparer.OrdinalIgnoreCase);
     private string? _selectedCategory;
@@ -33,6 +38,8 @@ internal sealed class OrganizerForm : Form
         Action<string> openItemAction,
         Action<string> openContainingFolderAction,
         Func<DesktopItem, string, Task> moveItemAction,
+        Func<DesktopItem, Task> restoreToDesktopAction,
+        Func<DesktopItem, Task> moveToRecycleBinAction,
         Func<Task> refreshAction,
         Func<Task> organizeAction,
         Func<Task> restoreAction)
@@ -40,6 +47,8 @@ internal sealed class OrganizerForm : Form
         _openItemAction = openItemAction;
         _openContainingFolderAction = openContainingFolderAction;
         _moveItemAction = moveItemAction;
+        _restoreToDesktopAction = restoreToDesktopAction;
+        _moveToRecycleBinAction = moveToRecycleBinAction;
         _refreshAction = refreshAction;
         _organizeAction = organizeAction;
         _restoreAction = restoreAction;
@@ -53,6 +62,21 @@ internal sealed class OrganizerForm : Form
         Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular);
 
         BuildLayout();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            foreach (var image in _iconCache.Values)
+            {
+                image.Dispose();
+            }
+
+            _iconCache.Clear();
+        }
+
+        base.Dispose(disposing);
     }
 
     public void LoadGroups(IReadOnlyDictionary<string, List<DesktopItem>> groups, string title, DateTime createdAtUtc)
@@ -115,107 +139,71 @@ internal sealed class OrganizerForm : Form
         var heroPanel = new GradientPanel
         {
             Dock = DockStyle.Top,
-            Height = 210,
-            Padding = new Padding(28, 26, 28, 22),
+            Height = 268,
+            Padding = new Padding(28, 22, 28, 22),
             StartColor = Color.FromArgb(16, 34, 64),
             EndColor = Color.FromArgb(28, 109, 193),
         };
 
-        var topRow = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 118,
-            ColumnCount = 2,
-            BackColor = Color.Transparent,
-        };
-        topRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 68F));
-        topRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32F));
-
-        var textPanel = new FlowLayoutPanel
+        var rootLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
+            ColumnCount = 1,
             BackColor = Color.Transparent,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = false,
+            RowCount = 5,
             Margin = new Padding(0),
             Padding = new Padding(0),
         };
+        rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
         _windowTagLabel = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
             BackColor = Color.FromArgb(34, 255, 255, 255),
             ForeColor = Color.FromArgb(226, 232, 240),
+            Width = 86,
+            Height = 28,
+            TextAlign = ContentAlignment.MiddleCenter,
             Padding = new Padding(10, 4, 10, 4),
             Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold),
             Text = "当前状态",
-            Margin = new Padding(0, 0, 0, 10),
+            Margin = new Padding(0, 0, 0, 0),
         };
 
         _titleLabel = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
             ForeColor = Color.White,
             Font = new Font("Microsoft YaHei UI", 26F, FontStyle.Bold),
             Text = "桌面收纳盒",
-            Margin = new Padding(0, 0, 0, 10),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.BottomLeft,
+            Margin = new Padding(0),
         };
 
         _summaryLabel = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
             ForeColor = Color.FromArgb(220, 235, 252),
             Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular),
             Text = "正在读取桌面项目...",
-            MaximumSize = new Size(680, 0),
-            Margin = new Padding(0),
-        };
-
-        textPanel.Controls.Add(_windowTagLabel);
-        textPanel.Controls.Add(_titleLabel);
-        textPanel.Controls.Add(_summaryLabel);
-
-        var summaryCard = new Panel
-        {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(30, 255, 255, 255),
-            Margin = new Padding(18, 0, 0, 0),
-            Padding = new Padding(18, 16, 18, 16),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Margin = new Padding(0, 2, 0, 0),
         };
-
-        var summaryTitle = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 28,
-            ForeColor = Color.FromArgb(214, 231, 255),
-            Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
-            Text = "当前操作说明",
-        };
-
-        var summaryBody = new Label
-        {
-            Dock = DockStyle.Fill,
-            AutoEllipsis = false,
-            ForeColor = Color.White,
-            Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular),
-            Text = "整理桌面会把文件移动到分类目录。\r\n快捷方式保留在桌面，可直接双击或右键管理。",
-        };
-
-        summaryCard.Controls.Add(summaryBody);
-        summaryCard.Controls.Add(summaryTitle);
-
-        topRow.Controls.Add(textPanel, 0, 0);
-        topRow.Controls.Add(summaryCard, 1, 0);
 
         var buttonPanel = new FlowLayoutPanel
         {
-            Dock = DockStyle.Bottom,
-            Height = 48,
+            Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             BackColor = Color.Transparent,
-            Margin = new Padding(0),
+            Margin = new Padding(0, 4, 0, 0),
         };
 
         _organizeButton = CreateHeroButton("桌面整理", Color.FromArgb(255, 255, 255), Color.FromArgb(18, 84, 160));
@@ -229,8 +217,40 @@ internal sealed class OrganizerForm : Form
 
         buttonPanel.Controls.AddRange([_organizeButton, _restoreButton, _refreshButton]);
 
-        heroPanel.Controls.Add(buttonPanel);
-        heroPanel.Controls.Add(topRow);
+        var summaryCard = new CardPanel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(85, 255, 255, 255),
+            Padding = new Padding(18, 14, 18, 14),
+            Margin = new Padding(0, 8, 0, 0),
+        };
+
+        var summaryTitle = new Label
+        {
+            Dock = DockStyle.Top,
+            Height = 28,
+            ForeColor = Color.FromArgb(236, 244, 255),
+            Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
+            Text = "当前操作说明",
+        };
+
+        var summaryBody = new Label
+        {
+            Dock = DockStyle.Fill,
+            AutoEllipsis = false,
+            ForeColor = Color.White,
+            Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular),
+            Text = "整理桌面会把文件移动到分类目录。右键可还原到桌面、放入回收站。\r\n移动后的分类会自动记忆。",
+        };
+
+        summaryCard.Controls.Add(summaryBody);
+        summaryCard.Controls.Add(summaryTitle);
+        rootLayout.Controls.Add(_windowTagLabel, 0, 0);
+        rootLayout.Controls.Add(_titleLabel, 0, 1);
+        rootLayout.Controls.Add(_summaryLabel, 0, 2);
+        rootLayout.Controls.Add(buttonPanel, 0, 3);
+        rootLayout.Controls.Add(summaryCard, 0, 4);
+        heroPanel.Controls.Add(rootLayout);
         return heroPanel;
     }
 
@@ -255,19 +275,21 @@ internal sealed class OrganizerForm : Form
         var sidebarTitle = new Label
         {
             Dock = DockStyle.Top,
-            Height = 28,
+            Height = 40,
             Font = new Font("Microsoft YaHei UI", 13F, FontStyle.Bold),
             ForeColor = Color.FromArgb(15, 23, 42),
             Text = "分类导航",
+            TextAlign = ContentAlignment.BottomLeft,
         };
 
         var sidebarSubTitle = new Label
         {
             Dock = DockStyle.Top,
-            Height = 48,
+            Height = 76,
             ForeColor = Color.FromArgb(100, 116, 139),
             Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular),
-            Text = "左侧切换分类，右侧查看详情。\r\n快捷方式固定归到“桌面保留”。",
+            Text = "左侧切换分类，右侧查看详情。\r\n桌面上的项目统一归到“桌面”。",
+            Padding = new Padding(0, 4, 0, 6),
         };
 
         _categoryFlowPanel = new FlowLayoutPanel
@@ -312,7 +334,7 @@ internal sealed class OrganizerForm : Form
             AutoSize = false,
             Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular),
             ForeColor = Color.FromArgb(100, 116, 139),
-            Text = "双击可以直接打开，右键可以打开所在位置或移动到其他分类。",
+            Text = "双击可以直接打开，右键可以打开位置、移动分类、还原桌面或放入回收站。",
             Dock = DockStyle.Top,
             Height = 40,
             Padding = new Padding(0, 8, 0, 0),
@@ -407,11 +429,19 @@ internal sealed class OrganizerForm : Form
         grid.GridColor = Color.FromArgb(232, 238, 247);
         grid.RowTemplate.Height = 48;
 
+        grid.Columns.Add(new DataGridViewImageColumn
+        {
+            HeaderText = string.Empty,
+            FillWeight = 4,
+            MinimumWidth = 34,
+            Width = 34,
+            ImageLayout = DataGridViewImageCellLayout.Zoom,
+        });
         grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             HeaderText = "名称",
-            FillWeight = 32,
-            MinimumWidth = 260,
+            FillWeight = 28,
+            MinimumWidth = 240,
         });
         grid.Columns.Add(new DataGridViewTextBoxColumn
         {
@@ -464,8 +494,13 @@ internal sealed class OrganizerForm : Form
         _itemContextMenu.Items.Add(new ToolStripMenuItem("打开", null, (_, _) => OpenSelectedItem()));
         _itemContextMenu.Items.Add(new ToolStripMenuItem("打开所在位置", null, (_, _) => OpenSelectedItemFolder()));
         _itemContextMenu.Items.Add(new ToolStripSeparator());
+        _restoreToDesktopMenuItem = new ToolStripMenuItem("还原到桌面", null, async (_, _) => await RestoreSelectedItemToDesktopAsync());
+        _moveToRecycleBinMenuItem = new ToolStripMenuItem("放入回收站", null, async (_, _) => await MoveSelectedItemToRecycleBinAsync());
+        _itemContextMenu.Items.Add(_restoreToDesktopMenuItem);
         _moveMenuItem = new ToolStripMenuItem("移动到");
         _itemContextMenu.Items.Add(_moveMenuItem);
+        _itemContextMenu.Items.Add(new ToolStripSeparator());
+        _itemContextMenu.Items.Add(_moveToRecycleBinMenuItem);
         _itemContextMenu.Opening += ItemContextMenuOnOpening;
         grid.ContextMenuStrip = _itemContextMenu;
 
@@ -498,8 +533,8 @@ internal sealed class OrganizerForm : Form
 
         foreach (var pair in _groups)
         {
-            var description = string.Equals(pair.Key, "桌面保留", StringComparison.OrdinalIgnoreCase)
-                ? "快捷方式保留在桌面"
+            var description = string.Equals(pair.Key, "桌面", StringComparison.OrdinalIgnoreCase)
+                ? "当前在桌面的项目"
                 : $"{pair.Value.Count} 个项目";
             var selected = string.Equals(pair.Key, _selectedCategory, StringComparison.OrdinalIgnoreCase);
             _categoryFlowPanel.Controls.Add(CreateCategoryCard(pair.Key, pair.Value.Count, description, selected));
@@ -529,13 +564,14 @@ internal sealed class OrganizerForm : Form
             return;
         }
 
-        _hintLabel.Text = string.Equals(category, "桌面保留", StringComparison.OrdinalIgnoreCase)
-            ? "这里显示保留在桌面的快捷方式。它们不参与整理，也不能移动分类。"
-            : "双击项目可直接打开，右键可打开所在位置或移动到其他分类。";
+        _hintLabel.Text = string.Equals(category, "桌面", StringComparison.OrdinalIgnoreCase)
+            ? "这里显示当前在桌面的项目。你可以继续保留，也可以右键手动归到某个分类。"
+            : "双击项目可直接打开，右键可移动分类、还原到桌面或放入回收站。";
 
         foreach (var item in items)
         {
             var rowIndex = _itemGrid.Rows.Add(
+                GetItemImage(item),
                 item.Name,
                 item.ItemType,
                 item.LocationLabel,
@@ -612,7 +648,7 @@ internal sealed class OrganizerForm : Form
 
         _moveMenuItem.DropDownItems.Clear();
         var movableCategories = _groups.Keys
-            .Where(category => !string.Equals(category, "桌面保留", StringComparison.OrdinalIgnoreCase))
+            .Where(category => !string.Equals(category, "桌面", StringComparison.OrdinalIgnoreCase))
             .Where(category => !string.Equals(category, item.Category, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
@@ -624,6 +660,10 @@ internal sealed class OrganizerForm : Form
         }
 
         _moveMenuItem.Enabled = item.CanMove && _moveMenuItem.DropDownItems.Count > 0;
+        _restoreToDesktopMenuItem.Enabled =
+            item.CanMove &&
+            !string.Equals(item.LocationLabel, "桌面", StringComparison.OrdinalIgnoreCase);
+        _moveToRecycleBinMenuItem.Enabled = true;
     }
 
     private async Task MoveItemAsync(DesktopItem item, string targetCategory)
@@ -631,6 +671,56 @@ internal sealed class OrganizerForm : Form
         try
         {
             await _moveItemAction(item, targetCategory);
+            await _refreshAction();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "桌面收纳盒", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private async Task RestoreSelectedItemToDesktopAsync()
+    {
+        var item = GetSelectedItem();
+        if (item is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _restoreToDesktopAction(item);
+            await _refreshAction();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "桌面收纳盒", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private async Task MoveSelectedItemToRecycleBinAsync()
+    {
+        var item = GetSelectedItem();
+        if (item is null)
+        {
+            return;
+        }
+
+        var result = MessageBox.Show(
+            this,
+            $"确定要把“{item.Name}”放入回收站吗？",
+            "桌面收纳盒",
+            MessageBoxButtons.OKCancel,
+            MessageBoxIcon.Question);
+
+        if (result != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            await _moveToRecycleBinAction(item);
             await _refreshAction();
         }
         catch (Exception ex)
@@ -669,6 +759,69 @@ internal sealed class OrganizerForm : Form
         }
 
         return _itemGrid.SelectedRows[0].Tag as DesktopItem;
+    }
+
+    private Image GetItemImage(DesktopItem item)
+    {
+        var cacheKey = $"{item.ItemType}|{item.FullPath}";
+        if (_iconCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        var image = TryExtractShellIcon(item.FullPath) ?? TryExtractShellIcon(item.OriginalPath) ?? CreateFallbackIcon(item);
+        _iconCache[cacheKey] = image;
+        return image;
+    }
+
+    private static Image? TryExtractShellIcon(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.Exists(path))
+        {
+            return null;
+        }
+
+        NativeMethods.ShFileInfo fileInfo;
+        var result = NativeMethods.SHGetFileInfo(
+            path,
+            0,
+            out fileInfo,
+            (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.ShFileInfo>(),
+            NativeMethods.ShgfiIcon | NativeMethods.ShgfiSmallIcon);
+        if (result == IntPtr.Zero || fileInfo.hIcon == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var icon = Icon.FromHandle(fileInfo.hIcon);
+            return icon.ToBitmap();
+        }
+        finally
+        {
+            NativeMethods.DestroyIcon(fileInfo.hIcon);
+        }
+    }
+
+    private static Image CreateFallbackIcon(DesktopItem item)
+    {
+        var bitmap = new Bitmap(18, 18);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.Clear(Color.Transparent);
+
+        var backColor = item.ItemType == "文件夹"
+            ? Color.FromArgb(246, 190, 66)
+            : Color.FromArgb(77, 143, 255);
+        using var brush = new SolidBrush(backColor);
+        using var accentBrush = new SolidBrush(Color.FromArgb(230, 255, 255, 255));
+        using var path = CreateRoundedRectangle(new Rectangle(1, 2, 16, 14), 4);
+
+        graphics.FillPath(brush, path);
+        graphics.FillRectangle(accentBrush, 4, 5, 10, 2);
+        graphics.FillRectangle(accentBrush, 4, 9, 7, 2);
+        return bitmap;
     }
 
     private static GraphicsPath CreateRoundedRectangle(Rectangle bounds, int radius)

@@ -60,6 +60,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _settingsService = new SettingsService(_paths.SettingsPath, _paths);
         _settings = _settingsService.Load();
         _settings.FloatingBallVisible = false;
+        _settingsService.Save(_settings);
         _databaseService = new DatabaseService(_paths.DatabasePath);
         _databaseService.Initialize();
         _startupService = new StartupService();
@@ -273,8 +274,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private async Task OpenOrganizerAsync()
     {
-        var groups = await _desktopOrganizerService.LoadCurrentGroupsAsync(_settings.CategoryRules, _settings.DefaultCategoryOrder);
-        EnsureOrganizerForm().LoadGroups(groups, "桌面收纳盒 - 当前状态", DateTime.UtcNow);
+        var groups = await _desktopOrganizerService.LoadCurrentGroupsAsync(
+            _settings.CategoryRules,
+            _settings.ItemCategoryOverrides,
+            _settings.DesktopPinnedItems,
+            _settings.DefaultCategoryOrder);
+        EnsureOrganizerForm().LoadGroups(NormalizeGroupsForDisplay(groups), "桌面收纳盒 - 当前状态", DateTime.UtcNow);
         ShowOwnedForm(_organizerForm!);
     }
 
@@ -282,9 +287,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         try
         {
-            var snapshot = await _desktopOrganizerService.OrganizeAsync(_settings.CategoryRules, _settings.DefaultCategoryOrder);
+            var snapshot = await _desktopOrganizerService.OrganizeAsync(
+                _settings.CategoryRules,
+                _settings.ItemCategoryOverrides,
+                _settings.DesktopPinnedItems,
+                _settings.DefaultCategoryOrder);
             var arranged = _desktopOrganizerService.ArrangeDesktopIcons();
-            EnsureOrganizerForm().LoadGroups(snapshot.Groups, $"桌面收纳盒 - 快照 #{snapshot.SnapshotId}", snapshot.CreatedAtUtc);
+            EnsureOrganizerForm().LoadGroups(NormalizeGroupsForDisplay(snapshot.Groups), $"桌面收纳盒 - 快照 #{snapshot.SnapshotId}", snapshot.CreatedAtUtc);
             ShowOwnedForm(_organizerForm!);
             ShowToast(arranged
                 ? "桌面项目已整理到分类目录，并按项目类型重新整理了桌面图标。"
@@ -308,7 +317,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            EnsureOrganizerForm().LoadGroups(snapshot.Value.Groups, $"恢复快照 #{snapshot.Value.SnapshotId}", snapshot.Value.CreatedAtUtc);
+            var currentGroups = await _desktopOrganizerService.LoadCurrentGroupsAsync(
+                _settings.CategoryRules,
+                _settings.ItemCategoryOverrides,
+                _settings.DesktopPinnedItems,
+                _settings.DefaultCategoryOrder);
+            EnsureOrganizerForm().LoadGroups(NormalizeGroupsForDisplay(currentGroups), $"恢复快照 #{snapshot.Value.SnapshotId}", snapshot.Value.CreatedAtUtc);
             ShowOwnedForm(_organizerForm!);
             ShowToast("最近一次整理已恢复到桌面根目录。");
         }
@@ -322,6 +336,79 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private async Task RefreshOrganizerAsync()
     {
         await OpenOrganizerAsync();
+    }
+
+    private IReadOnlyDictionary<string, List<DesktopItem>> NormalizeGroupsForDisplay(
+        IReadOnlyDictionary<string, List<DesktopItem>> groups)
+    {
+        var result = _settings.DefaultCategoryOrder.ToDictionary(
+            category => category,
+            _ => new List<DesktopItem>(),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in groups.SelectMany(pair => pair.Value))
+        {
+            var displayCategory = string.Equals(item.LocationLabel, "桌面", StringComparison.OrdinalIgnoreCase)
+                ? DesktopOrganizerService.DesktopReservedCategory
+                : item.Category;
+
+            if (!result.TryGetValue(displayCategory, out var list))
+            {
+                list = [];
+                result[displayCategory] = list;
+            }
+
+            list.Add(new DesktopItem
+            {
+                Id = item.Id,
+                SnapshotId = item.SnapshotId,
+                Name = item.Name,
+                FullPath = item.FullPath,
+                OriginalPath = item.OriginalPath,
+                Category = displayCategory,
+                ItemType = item.ItemType,
+                LocationLabel = item.LocationLabel,
+                StatusLabel = item.StatusLabel,
+                CanMove = item.CanMove,
+                CanAutoOrganize = item.CanAutoOrganize,
+                LastWriteTimeUtc = item.LastWriteTimeUtc,
+            });
+        }
+
+        foreach (var pair in result)
+        {
+            pair.Value.Sort((left, right) => StringComparer.CurrentCultureIgnoreCase.Compare(left.Name, right.Name));
+        }
+
+        return result;
+    }
+
+    private async Task MoveOrganizerItemAsync(DesktopItem item, string targetCategory)
+    {
+        await _desktopOrganizerService.MoveItemToCategoryAsync(item, targetCategory);
+        _settings.DesktopPinnedItems.RemoveAll(name => string.Equals(name, item.Name, StringComparison.OrdinalIgnoreCase));
+        _settings.ItemCategoryOverrides[item.Name] = targetCategory;
+        SaveSettings();
+    }
+
+    private async Task RestoreOrganizerItemToDesktopAsync(DesktopItem item)
+    {
+        await _desktopOrganizerService.RestoreItemToDesktopAsync(item);
+        _settings.ItemCategoryOverrides.Remove(item.Name);
+        if (!_settings.DesktopPinnedItems.Any(name => string.Equals(name, item.Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            _settings.DesktopPinnedItems.Add(item.Name);
+        }
+
+        SaveSettings();
+    }
+
+    private async Task MoveOrganizerItemToRecycleBinAsync(DesktopItem item)
+    {
+        await _desktopOrganizerService.MoveItemToRecycleBinAsync(item);
+        _settings.ItemCategoryOverrides.Remove(item.Name);
+        _settings.DesktopPinnedItems.RemoveAll(name => string.Equals(name, item.Name, StringComparison.OrdinalIgnoreCase));
+        SaveSettings();
     }
 
     private async Task OpenSearchAsync()
@@ -550,7 +637,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _organizerForm = new OrganizerForm(
                 _desktopOrganizerService.OpenItem,
                 _desktopOrganizerService.OpenContainingFolder,
-                _desktopOrganizerService.MoveItemToCategoryAsync,
+                MoveOrganizerItemAsync,
+                RestoreOrganizerItemToDesktopAsync,
+                MoveOrganizerItemToRecycleBinAsync,
                 RefreshOrganizerAsync,
                 OrganizeDesktopAsync,
                 RestoreLayoutAsync);

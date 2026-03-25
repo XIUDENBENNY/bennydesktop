@@ -22,5 +22,7 @@ internal sealed class DesktopItem
 
     public bool CanMove { get; init; } = true;
 
+    public bool CanAutoOrganize { get; init; } = true;
+
     public DateTime LastWriteTimeUtc { get; init; }
 }

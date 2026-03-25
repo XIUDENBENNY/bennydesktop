@@ -3,13 +3,14 @@ using System.Runtime.InteropServices;
 using DesktopAssistantLite.App.Models;
 using DesktopAssistantLite.App.Storage;
 using Microsoft.Data.Sqlite;
+using Microsoft.VisualBasic.FileIO;
 
 namespace DesktopAssistantLite.App.Services;
 
 internal sealed class DesktopOrganizerService
 {
     private const string ManagedFolderPrefix = "桌面整理_";
-    private const string DesktopReservedCategory = "桌面保留";
+    internal const string DesktopReservedCategory = "桌面";
 
     private readonly DatabaseService _databaseService;
     private readonly LogService _logService;
@@ -23,29 +24,40 @@ internal sealed class DesktopOrganizerService
 
     public async Task<(long SnapshotId, DateTime CreatedAtUtc, IReadOnlyDictionary<string, List<DesktopItem>> Groups)> OrganizeAsync(
         Dictionary<string, List<string>> categoryRules,
+        Dictionary<string, string> itemCategoryOverrides,
+        IReadOnlyCollection<string> desktopPinnedItems,
         IReadOnlyList<string> categoryOrder)
     {
-        var items = ScanDesktop(categoryRules, includeManagedFolders: true);
-        var managedItems = items.Where(item => item.CanMove).ToList();
+        var items = ScanDesktop(categoryRules, itemCategoryOverrides, desktopPinnedItems, includeManagedFolders: true);
+        var managedItems = items.Where(item => item.CanAutoOrganize).ToList();
         var createdAtUtc = DateTime.UtcNow;
         var snapshotId = SaveSnapshot(managedItems, createdAtUtc);
         MoveItemsIntoCategoryFolders(managedItems);
-        var groups = await LoadCurrentGroupsAsync(categoryRules, categoryOrder);
+        var groups = await LoadCurrentGroupsAsync(categoryRules, itemCategoryOverrides, desktopPinnedItems, categoryOrder);
         _logService.Info($"Desktop organized with snapshot {snapshotId}, movable item count {managedItems.Count}.");
         return (snapshotId, createdAtUtc, groups);
     }
 
     public bool ArrangeDesktopIcons()
     {
-        var sorted = TrySortDesktopIconsByType();
         var listViewHandle = FindDesktopListViewHandle();
-        if (listViewHandle == IntPtr.Zero)
+        var sorted = false;
+        var arranged = false;
+
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            return sorted;
+            sorted |= TrySortDesktopIconsByType();
+
+            if (listViewHandle != IntPtr.Zero)
+            {
+                NativeMethods.SendMessage(listViewHandle, NativeMethods.LvmArrange, (IntPtr)NativeMethods.LvaDefault, IntPtr.Zero);
+                arranged = true;
+            }
+
+            Thread.Sleep(120);
         }
 
-        NativeMethods.SendMessage(listViewHandle, NativeMethods.LvmArrange, (IntPtr)NativeMethods.LvaDefault, IntPtr.Zero);
-        return true;
+        return listViewHandle == IntPtr.Zero ? sorted : sorted && arranged;
     }
 
     public Task<(long SnapshotId, DateTime CreatedAtUtc, IReadOnlyDictionary<string, List<DesktopItem>> Groups)?> RestoreLatestSnapshotAsync(
@@ -89,11 +101,13 @@ internal sealed class DesktopOrganizerService
 
     public Task<IReadOnlyDictionary<string, List<DesktopItem>>> LoadCurrentGroupsAsync(
         Dictionary<string, List<string>> categoryRules,
+        Dictionary<string, string> itemCategoryOverrides,
+        IReadOnlyCollection<string> desktopPinnedItems,
         IReadOnlyList<string> categoryOrder)
     {
         return Task.Run<IReadOnlyDictionary<string, List<DesktopItem>>>(() =>
         {
-            var items = ScanDesktop(categoryRules, includeManagedFolders: true);
+            var items = ScanDesktop(categoryRules, itemCategoryOverrides, desktopPinnedItems, includeManagedFolders: true);
             return GroupItems(items, categoryOrder);
         });
     }
@@ -129,6 +143,70 @@ internal sealed class DesktopOrganizerService
         });
     }
 
+    public Task RestoreItemToDesktopAsync(DesktopItem item)
+    {
+        return Task.Run(() =>
+        {
+            var sourcePath = ResolveExistingPath(item);
+            if (sourcePath is null)
+            {
+                throw new FileNotFoundException("未找到要还原的桌面项目。", item.FullPath);
+            }
+
+            var targetPath = Path.Combine(GetDesktopPath(), item.Name);
+            if (string.Equals(sourcePath, targetPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (Path.Exists(targetPath))
+            {
+                throw new IOException($"桌面已存在同名项目：{targetPath}");
+            }
+
+            MovePath(sourcePath, targetPath);
+            CleanupManagedFolders();
+            _logService.Info($"Desktop item restored from {sourcePath} to {targetPath}");
+        });
+    }
+
+    public Task MoveItemToRecycleBinAsync(DesktopItem item)
+    {
+        return Task.Run(() =>
+        {
+            var sourcePath = ResolveExistingPath(item);
+            if (sourcePath is null)
+            {
+                throw new FileNotFoundException("未找到要删除的桌面项目。", item.FullPath);
+            }
+
+            try
+            {
+                if (Directory.Exists(sourcePath))
+                {
+                    FileSystem.DeleteDirectory(
+                        sourcePath,
+                        UIOption.OnlyErrorDialogs,
+                        RecycleOption.SendToRecycleBin);
+                }
+                else
+                {
+                    FileSystem.DeleteFile(
+                        sourcePath,
+                        UIOption.OnlyErrorDialogs,
+                        RecycleOption.SendToRecycleBin);
+                }
+
+                CleanupManagedFolders();
+                _logService.Info($"Desktop item moved to recycle bin: {sourcePath}");
+            }
+            catch (OperationCanceledException)
+            {
+                _logService.Info($"Recycle bin action canceled: {sourcePath}");
+            }
+        });
+    }
+
     public void OpenItem(string path)
     {
         try
@@ -156,7 +234,11 @@ internal sealed class DesktopOrganizerService
         }
     }
 
-    private List<DesktopItem> ScanDesktop(Dictionary<string, List<string>> categoryRules, bool includeManagedFolders)
+    private List<DesktopItem> ScanDesktop(
+        Dictionary<string, List<string>> categoryRules,
+        Dictionary<string, string> itemCategoryOverrides,
+        IReadOnlyCollection<string> desktopPinnedItems,
+        bool includeManagedFolders)
     {
         var desktopPath = GetDesktopPath();
         var items = new List<DesktopItem>();
@@ -171,7 +253,7 @@ internal sealed class DesktopOrganizerService
                     var category = name[ManagedFolderPrefix.Length..];
                     foreach (var managedChild in Directory.EnumerateFileSystemEntries(entry))
                     {
-                        TryAppendItem(items, managedChild, categoryRules, category, isManagedFolderItem: true);
+                        TryAppendItem(items, managedChild, categoryRules, itemCategoryOverrides, desktopPinnedItems, category, isManagedFolderItem: true);
                     }
 
                     continue;
@@ -182,7 +264,7 @@ internal sealed class DesktopOrganizerService
                     continue;
                 }
 
-                TryAppendItem(items, entry, categoryRules, explicitCategory: null, isManagedFolderItem: false);
+                TryAppendItem(items, entry, categoryRules, itemCategoryOverrides, desktopPinnedItems, explicitCategory: null, isManagedFolderItem: false);
             }
             catch (Exception ex)
             {
@@ -200,6 +282,8 @@ internal sealed class DesktopOrganizerService
         List<DesktopItem> items,
         string path,
         Dictionary<string, List<string>> categoryRules,
+        Dictionary<string, string> itemCategoryOverrides,
+        IReadOnlyCollection<string> desktopPinnedItems,
         string? explicitCategory,
         bool isManagedFolderItem)
     {
@@ -215,11 +299,15 @@ internal sealed class DesktopOrganizerService
         var isShortcut = !isDirectory && IsShortcut(name);
         var info = isDirectory ? new DirectoryInfo(path) as FileSystemInfo : new FileInfo(path);
 
-        var category = explicitCategory ?? DetermineCategory(path, isDirectory, categoryRules, isShortcut);
+        var category = explicitCategory ?? DetermineCategory(path, name, isDirectory, categoryRules, itemCategoryOverrides, desktopPinnedItems, isShortcut);
         var isReserved = string.Equals(category, DesktopReservedCategory, StringComparison.OrdinalIgnoreCase);
         var originalPath = isReserved ? path : Path.Combine(GetDesktopPath(), name);
         var locationLabel = isManagedFolderItem ? $"分类目录/{category}" : "桌面";
-        var statusLabel = isReserved ? "桌面保留，不参与整理" : isManagedFolderItem ? "已整理" : "未整理";
+        var statusLabel = isReserved
+            ? "当前在桌面，可继续保留或手动归类"
+            : isManagedFolderItem
+                ? "已整理"
+                : "未整理";
 
         items.Add(new DesktopItem
         {
@@ -230,7 +318,8 @@ internal sealed class DesktopOrganizerService
             ItemType = isDirectory ? "文件夹" : InferItemType(path),
             LocationLabel = locationLabel,
             StatusLabel = statusLabel,
-            CanMove = !isReserved,
+            CanMove = true,
+            CanAutoOrganize = !isReserved,
             LastWriteTimeUtc = info.LastWriteTimeUtc,
         });
     }
@@ -391,6 +480,7 @@ internal sealed class DesktopOrganizerService
                 LocationLabel = "桌面",
                 StatusLabel = "恢复后在桌面",
                 CanMove = true,
+                CanAutoOrganize = true,
                 LastWriteTimeUtc = DateTime.Parse(reader.GetString(6)).ToUniversalTime(),
             });
         }
@@ -398,8 +488,26 @@ internal sealed class DesktopOrganizerService
         return items;
     }
 
-    private static string DetermineCategory(string path, bool isDirectory, Dictionary<string, List<string>> categoryRules, bool isShortcut)
+    private static string DetermineCategory(
+        string path,
+        string name,
+        bool isDirectory,
+        Dictionary<string, List<string>> categoryRules,
+        Dictionary<string, string> itemCategoryOverrides,
+        IReadOnlyCollection<string> desktopPinnedItems,
+        bool isShortcut)
     {
+        if (desktopPinnedItems.Contains(name, StringComparer.OrdinalIgnoreCase))
+        {
+            return DesktopReservedCategory;
+        }
+
+        if (itemCategoryOverrides.TryGetValue(name, out var preferredCategory) &&
+            !string.IsNullOrWhiteSpace(preferredCategory))
+        {
+            return preferredCategory;
+        }
+
         if (isShortcut)
         {
             return DesktopReservedCategory;

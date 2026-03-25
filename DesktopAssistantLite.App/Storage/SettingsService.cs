@@ -81,6 +81,21 @@ internal sealed class SettingsService
             normalized.CategoryRules = AppSettings.CreateDefaultCategoryRules();
         }
 
+        normalized.ItemCategoryOverrides = normalized.ItemCategoryOverrides
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+            .Where(pair => !string.Equals(pair.Value.Trim(), "桌面保留", StringComparison.OrdinalIgnoreCase))
+            .Where(pair => !string.Equals(pair.Value.Trim(), "桌面", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(
+                pair => pair.Key.Trim(),
+                pair => pair.Value.Trim(),
+                StringComparer.OrdinalIgnoreCase);
+
+        normalized.DesktopPinnedItems = normalized.DesktopPinnedItems
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         return normalized;
     }
 }

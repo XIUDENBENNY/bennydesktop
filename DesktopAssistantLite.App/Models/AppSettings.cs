@@ -20,6 +20,10 @@ internal sealed class AppSettings
 
     public Dictionary<string, List<string>> CategoryRules { get; set; } = [];
 
+    public Dictionary<string, string> ItemCategoryOverrides { get; set; } = [];
+
+    public List<string> DesktopPinnedItems { get; set; } = [];
+
     public int MemoryRefreshIntervalSeconds { get; set; } = 5;
 
     public bool BoostExplorerRestartEnabled { get; set; }
@@ -33,7 +37,7 @@ internal sealed class AppSettings
         "安装包",
         "文件夹",
         "其他",
-        "桌面保留",
+        "桌面",
     ];
 
     public AppSettings Clone()
@@ -51,6 +55,11 @@ internal sealed class AppSettings
                 pair => pair.Key,
                 pair => pair.Value.ToList(),
                 StringComparer.OrdinalIgnoreCase),
+            ItemCategoryOverrides = ItemCategoryOverrides.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value,
+                StringComparer.OrdinalIgnoreCase),
+            DesktopPinnedItems = [.. DesktopPinnedItems],
             MemoryRefreshIntervalSeconds = MemoryRefreshIntervalSeconds,
             BoostExplorerRestartEnabled = BoostExplorerRestartEnabled,
         };
@@ -75,6 +84,8 @@ internal sealed class AppSettings
             ],
             ScreenshotSaveDir = paths.ScreenshotDirectory,
             CategoryRules = CreateDefaultCategoryRules(),
+            ItemCategoryOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            DesktopPinnedItems = [],
             MemoryRefreshIntervalSeconds = 5,
             BoostExplorerRestartEnabled = false,
         };
