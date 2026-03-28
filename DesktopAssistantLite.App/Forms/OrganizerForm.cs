@@ -126,7 +126,7 @@ internal sealed class OrganizerForm : Form
             Padding = new Padding(22),
         };
 
-        var heroPanel = BuildHeroPanel();
+        var heroPanel = BuildHeroPanelV2();
         var contentPanel = BuildContentPanel();
 
         rootPanel.Controls.Add(contentPanel);
@@ -136,21 +136,20 @@ internal sealed class OrganizerForm : Form
 
     private Control BuildHeroPanel()
     {
-        var heroPanel = new GradientPanel
+        var heroPanel = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 268,
+            Height = 316,
             Padding = new Padding(28, 22, 28, 22),
-            StartColor = Color.FromArgb(16, 34, 64),
-            EndColor = Color.FromArgb(28, 109, 193),
+            BackColor = Color.FromArgb(29, 84, 158),
         };
 
         var rootLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            BackColor = Color.Transparent,
             RowCount = 5,
+            BackColor = Color.Transparent,
             Margin = new Padding(0),
             Padding = new Padding(0),
         };
@@ -158,8 +157,8 @@ internal sealed class OrganizerForm : Form
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72F));
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
-        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
-        rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90F));
 
         _windowTagLabel = new Label
         {
@@ -178,12 +177,13 @@ internal sealed class OrganizerForm : Form
         _titleLabel = new Label
         {
             AutoSize = false,
-            ForeColor = Color.White,
+            ForeColor = Color.FromArgb(245, 249, 255),
             Font = new Font("Microsoft YaHei UI", 26F, FontStyle.Bold),
             Text = "桌面收纳盒",
-            Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.BottomLeft,
             Margin = new Padding(0),
+            BackColor = Color.Transparent,
+            Dock = DockStyle.Fill,
         };
 
         _summaryLabel = new Label
@@ -192,18 +192,10 @@ internal sealed class OrganizerForm : Form
             ForeColor = Color.FromArgb(220, 235, 252),
             Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular),
             Text = "正在读取桌面项目...",
-            Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
             Margin = new Padding(0, 2, 0, 0),
-        };
-
-        var buttonPanel = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
             BackColor = Color.Transparent,
-            Margin = new Padding(0, 4, 0, 0),
+            Dock = DockStyle.Fill,
         };
 
         _organizeButton = CreateHeroButton("桌面整理", Color.FromArgb(255, 255, 255), Color.FromArgb(18, 84, 160));
@@ -215,21 +207,37 @@ internal sealed class OrganizerForm : Form
         _refreshButton = CreateHeroButton("刷新当前桌面", Color.FromArgb(34, 255, 255, 255), Color.White);
         _refreshButton.Click += async (_, _) => await _refreshAction();
 
-        buttonPanel.Controls.AddRange([_organizeButton, _restoreButton, _refreshButton]);
-
-        var summaryCard = new CardPanel
+        var buttonPanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(85, 255, 255, 255),
-            Padding = new Padding(18, 14, 18, 14),
-            Margin = new Padding(0, 8, 0, 0),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Margin = new Padding(0),
+            Padding = new Padding(0),
+        };
+        buttonPanel.Controls.AddRange([_organizeButton, _restoreButton, _refreshButton]);
+
+        var summaryHost = new Panel
+        {
+            BackColor = Color.Transparent,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+        };
+
+        var summaryCard = new InfoStripPanel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(164, 191, 223),
+            Padding = new Padding(14, 10, 14, 10),
+            Margin = new Padding(0),
         };
 
         var summaryTitle = new Label
         {
             Dock = DockStyle.Top,
-            Height = 28,
-            ForeColor = Color.FromArgb(236, 244, 255),
+            Height = 20,
+            ForeColor = Color.FromArgb(44, 73, 112),
             Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
             Text = "当前操作说明",
         };
@@ -239,18 +247,107 @@ internal sealed class OrganizerForm : Form
             Dock = DockStyle.Fill,
             AutoEllipsis = false,
             ForeColor = Color.White,
-            Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular),
-            Text = "整理桌面会把文件移动到分类目录。右键可还原到桌面、放入回收站。\r\n移动后的分类会自动记忆。",
+            Font = new Font("Microsoft YaHei UI", 9.6F, FontStyle.Regular),
+            Padding = new Padding(0, 4, 0, 0),
+            Text = "整理桌面会把文件移入分类目录，桌面项目统一归到“桌面”。\r\n右键可还原到桌面、放入回收站，并记住手动归类。",
         };
 
         summaryCard.Controls.Add(summaryBody);
         summaryCard.Controls.Add(summaryTitle);
+        summaryHost.Controls.Add(summaryCard);
+
         rootLayout.Controls.Add(_windowTagLabel, 0, 0);
         rootLayout.Controls.Add(_titleLabel, 0, 1);
         rootLayout.Controls.Add(_summaryLabel, 0, 2);
         rootLayout.Controls.Add(buttonPanel, 0, 3);
-        rootLayout.Controls.Add(summaryCard, 0, 4);
+        rootLayout.Controls.Add(summaryHost, 0, 4);
         heroPanel.Controls.Add(rootLayout);
+        return heroPanel;
+    }
+
+    private Control BuildHeroPanelV2()
+    {
+        var heroPanel = new Panel
+        {
+            Dock = DockStyle.Top,
+            Padding = new Padding(28, 22, 28, 20),
+            BackColor = Color.FromArgb(15, 56, 120),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+
+        var contentPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Margin = new Padding(0),
+            Padding = new Padding(0),
+        };
+
+        _windowTagLabel = new Label
+        {
+            AutoSize = true,
+            MinimumSize = new Size(82, 28),
+            Padding = new Padding(10, 4, 10, 4),
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.FromArgb(48, 255, 255, 255),
+            ForeColor = Color.FromArgb(235, 243, 255),
+            Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Text = "当前状态",
+        };
+
+        _titleLabel = new Label
+        {
+            AutoSize = true,
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent,
+            ForeColor = Color.FromArgb(247, 250, 255),
+            Font = new Font("Microsoft YaHei", 26F, FontStyle.Bold),
+            Text = "桌面收纳盒",
+        };
+
+        _summaryLabel = new Label
+        {
+            AutoSize = true,
+            Margin = new Padding(0, 0, 0, 12),
+            BackColor = Color.Transparent,
+            ForeColor = Color.FromArgb(210, 225, 246),
+            Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Regular),
+            Text = "正在读取桌面项目...",
+        };
+
+        _organizeButton = CreateHeroButton("桌面整理", Color.FromArgb(255, 255, 255), Color.FromArgb(16, 71, 148));
+        _organizeButton.Click += async (_, _) => await _organizeAction();
+
+        _restoreButton = CreateHeroButton("恢复布局", Color.FromArgb(38, 255, 255, 255), Color.White);
+        _restoreButton.Click += async (_, _) => await _restoreAction();
+
+        _refreshButton = CreateHeroButton("刷新当前桌面", Color.FromArgb(38, 255, 255, 255), Color.White);
+        _refreshButton.Click += async (_, _) => await _refreshAction();
+
+        var buttonPanel = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Margin = new Padding(0),
+            Padding = new Padding(0),
+        };
+        buttonPanel.Controls.AddRange([_organizeButton, _restoreButton, _refreshButton]);
+
+        contentPanel.Controls.Add(_windowTagLabel);
+        contentPanel.Controls.Add(_titleLabel);
+        contentPanel.Controls.Add(_summaryLabel);
+        contentPanel.Controls.Add(buttonPanel);
+
+        heroPanel.Controls.Add(contentPanel);
         return heroPanel;
     }
 
@@ -512,7 +609,7 @@ internal sealed class OrganizerForm : Form
         var button = new Button
         {
             Text = text,
-            Width = 126,
+            Width = 132,
             Height = 38,
             Margin = new Padding(0, 0, 12, 0),
             BackColor = backColor,
@@ -522,7 +619,14 @@ internal sealed class OrganizerForm : Form
             Cursor = Cursors.Hand,
         };
 
-        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.BorderSize = backColor.A < 255 ? 1 : 0;
+        button.FlatAppearance.BorderColor = Color.FromArgb(76, 194, 214, 240);
+        button.FlatAppearance.MouseOverBackColor = backColor.A < 255
+            ? Color.FromArgb(54, 255, 255, 255)
+            : Color.FromArgb(242, 246, 255);
+        button.FlatAppearance.MouseDownBackColor = backColor.A < 255
+            ? Color.FromArgb(70, 255, 255, 255)
+            : Color.FromArgb(228, 236, 250);
         return button;
     }
 
@@ -881,6 +985,31 @@ internal sealed class OrganizerForm : Form
 
             e.Graphics.FillPath(brush, path);
             e.Graphics.DrawPath(pen, path);
+        }
+    }
+
+    private sealed class InfoStripPanel : Panel
+    {
+        public InfoStripPanel()
+        {
+            DoubleBuffered = true;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+
+            if (Width <= 1 || Height <= 1)
+            {
+                return;
+            }
+
+            var bounds = new Rectangle(0, 0, Width - 1, Height - 1);
+            using var brush = new SolidBrush(BackColor);
+            using var pen = new Pen(Color.FromArgb(206, 220, 238));
+
+            e.Graphics.FillRectangle(brush, bounds);
+            e.Graphics.DrawRectangle(pen, bounds);
         }
     }
 

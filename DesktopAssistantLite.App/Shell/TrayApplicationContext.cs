@@ -712,7 +712,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowToast(string message)
     {
-        ShowToast("Desktop Assistant Lite", message);
+        ShowToast("桌面收纳盒", message);
     }
 
     private void ShowToast(string title, string message)
